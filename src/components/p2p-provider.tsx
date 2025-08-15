@@ -7,6 +7,7 @@ interface P2PContextState {
   setRoomId: (id: string | null) => void;
   createRoom: () => void;
   joinRoom: (id: string) => void;
+  leaveRoom: () => void;
   sendSignal: (data: any) => Promise<void>;
   eventSource: EventSource | null;
 }
@@ -33,6 +34,13 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRoomId(id.toUpperCase());
     role.current = 'receiver';
   }, []);
+  
+  const leaveRoom = useCallback(() => {
+    setRoomId(null);
+    role.current = null;
+    // The useEffect cleanup will close the eventSource
+  }, []);
+
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -48,7 +56,7 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setEventSource(null);
     };
-  }, [roomId]);
+  }, [roomId, role]);
 
 
   const sendSignal = useCallback(async (data: any) => {
@@ -66,9 +74,10 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRoomId,
     createRoom,
     joinRoom,
+    leaveRoom,
     sendSignal,
     eventSource,
-  }), [roomId, createRoom, joinRoom, sendSignal, eventSource]);
+  }), [roomId, setRoomId, createRoom, joinRoom, leaveRoom, sendSignal, eventSource]);
 
   return (
     <P2PContext.Provider value={value}>

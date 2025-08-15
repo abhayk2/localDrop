@@ -105,7 +105,7 @@ function TransferInProgress() {
 }
 
 function SenderView() {
-    const { roomId } = useP2P();
+    const { roomId, leaveRoom } = useP2P();
     const { file, setFile, status, progress, startSending, error, isPeerConnected } = usePeer();
     const { toast } = useToast();
 
@@ -161,6 +161,7 @@ function SenderView() {
                         <p className="text-muted-foreground">Waiting for receiver to connect...</p>
                       </div>
                     )}
+                    <Button variant="ghost" onClick={leaveRoom} className="w-full">Cancel</Button>
                 </CardContent>
             </>
         )
