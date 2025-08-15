@@ -12,6 +12,7 @@ interface PeerState {
   setFile: (file: File | null) => void;
   progress: number;
   status: 'idle' | 'connecting' | 'connected' | 'transferring' | 'done' | 'error';
+  isPeerConnected: boolean;
   startSending: () => void;
   downloadFile: () => void;
   role: PeerRole | null;
@@ -27,6 +28,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'transferring' | 'done' | 'error'>('idle');
+  const [isPeerConnected, setIsPeerConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const pc = useRef<RTCPeerConnection | null>(null);
@@ -48,6 +50,16 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sendSignal({ type: 'ice-candidate', candidate: event.candidate });
       }
     };
+    
+    newPc.onconnectionstatechange = () => {
+        if (newPc.connectionState === 'connected') {
+            setStatus('connected');
+        }
+         if (newPc.connectionState === 'failed' || newPc.connectionState === 'disconnected') {
+            setError('Peer connection failed. Please try again.');
+            setStatus('error');
+        }
+    }
 
     newPc.ondatachannel = (event) => {
       dataChannel.current = event.channel;
@@ -63,7 +75,11 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setStatus('connected');
     };
     dataChannel.current.onclose = () => {
-      setStatus('idle');
+       // Only reset if not done or errored
+      if(status !== 'done' && status !== 'error') {
+         setStatus('idle');
+         setIsPeerConnected(false);
+      }
     };
     dataChannel.current.onmessage = (event) => {
         handleDataChannelMessage(event.data);
@@ -95,7 +111,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const startSending = () => {
-    if (role !== 'sender' || !file || !pc.current) return;
+    if (role !== 'sender' || !file || !pc.current || !isPeerConnected) return;
 
     dataChannel.current = pc.current.createDataChannel('file-transfer');
     setupDataChannel();
@@ -104,11 +120,15 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .then(offer => pc.current!.setLocalDescription(offer))
       .then(() => {
         sendSignal({ type: 'offer', sdp: pc.current!.localDescription });
+      }).catch(e => {
+          setError('Failed to create offer.');
+          setStatus('error');
+          console.error(e);
       });
   };
 
   useEffect(() => {
-    if (status === 'connected' && role === 'sender' && file && dataChannel.current) {
+    if (status === 'connected' && role === 'sender' && file && dataChannel.current?.readyState === 'open') {
         sendFile();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,19 +148,35 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let offset = 0;
 
     fileReader.onload = (e) => {
-      if (!e.target?.result) return;
-      const chunk = e.target.result as ArrayBuffer;
-      dataChannel.current?.send(chunk);
-      offset += chunk.byteLength;
-      setProgress((offset / file.size) * 100);
+      if (!e.target?.result || dataChannel.current?.readyState !== 'open') {
+        setError('Data channel closed during transfer.');
+        setStatus('error');
+        return;
+      };
 
-      if (offset < file.size) {
-        readSlice(offset);
-      } else {
-        dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
-        setStatus('done');
+      const chunk = e.target.result as ArrayBuffer;
+      try {
+        dataChannel.current?.send(chunk);
+        offset += chunk.byteLength;
+        setProgress((offset / file.size) * 100);
+
+        if (offset < file.size) {
+          readSlice(offset);
+        } else {
+          dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
+          setStatus('done');
+        }
+      } catch (error) {
+          setError('Failed to send file chunk.');
+          setStatus('error');
+          console.error(error);
       }
     };
+    
+    fileReader.onerror = () => {
+        setError('Error reading file.');
+        setStatus('error');
+    }
 
     const readSlice = (o: number) => {
       const slice = file.slice(o, o + CHUNK_SIZE);
@@ -169,18 +205,35 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!eventSource || !role) return;
 
+    // We only initialize the peer connection once we have a valid event source.
     initializePeerConnection();
 
     eventSource.onmessage = async (event) => {
+      if (event.data.startsWith(':')) return; // Ignore keep-alive comments
+      
       const msg = JSON.parse(event.data);
 
-      if (msg.type === 'offer' && role === 'receiver' && pc.current) {
+      if (msg.type === 'peer-connected') {
+          setIsPeerConnected(true);
+          // If we are the sender and the peer connects, we can now create an offer.
+          if(role === 'sender' && pc.current?.signalingState === 'stable') {
+              startSending();
+          }
+      } else if (msg.type === 'peer-disconnected') {
+           setIsPeerConnected(false);
+           if (status !== 'done') {
+                setError('The other user disconnected.');
+                setStatus('error');
+           }
+      } else if (msg.type === 'offer' && role === 'receiver' && pc.current) {
         await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         const answer = await pc.current.createAnswer();
         await pc.current.setLocalDescription(answer);
         sendSignal({ type: 'answer', sdp: pc.current.localDescription });
       } else if (msg.type === 'answer' && role === 'sender' && pc.current) {
-        await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        if (pc.current.signalingState === 'have-local-offer') {
+          await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        }
       } else if (msg.type === 'ice-candidate' && pc.current) {
         try {
             await pc.current.addIceCandidate(new RTCIceCandidate(msg.candidate));
@@ -191,7 +244,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     eventSource.onerror = () => {
-      setError('Connection to server lost.');
+      setError('Connection to signaling server lost.');
       setStatus('error');
       eventSource.close();
     };
@@ -201,7 +254,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       pc.current = null;
       dataChannel.current?.close();
       dataChannel.current = null;
-      eventSource.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventSource, role]);
@@ -211,12 +263,13 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setFile,
     progress,
     status,
+    isPeerConnected,
     startSending,
     downloadFile,
     role,
     setRole,
     error,
-  }), [file, progress, status, startSending, downloadFile, role, setRole, error]);
+  }), [file, progress, status, isPeerConnected, startSending, downloadFile, role, setRole, error]);
 
   return (
     <PeerContext.Provider value={value}>

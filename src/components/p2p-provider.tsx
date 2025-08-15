@@ -35,20 +35,25 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   useEffect(() => {
+    let es: EventSource | null = null;
     if (roomId && role.current) {
-      const es = new EventSource(`/api/p2p?roomId=${roomId}&type=${role.current}`);
+      // The GET request establishes the EventSource connection.
+      es = new EventSource(`/api/p2p?roomId=${roomId}&type=${role.current}`);
       setEventSource(es);
-
-      return () => {
-        es.close();
-        setEventSource(null);
-      };
     }
+    
+    return () => {
+      if (es) {
+        es.close();
+      }
+      setEventSource(null);
+    };
   }, [roomId]);
 
 
   const sendSignal = useCallback(async (data: any) => {
     if (!roomId || !role.current) return;
+    // POST requests are now only for sending signals.
     await fetch('/api/p2p', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
