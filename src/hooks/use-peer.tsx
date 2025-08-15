@@ -29,9 +29,16 @@ interface PeerState {
 const PeerContext = createContext<PeerState | null>(null);
 
 function sanitizeFilename(filename: string): string {
+    const trimmedFilename = filename.trim();
+    
+    // Replace names that are only dots (e.g., "..", "...")
+    if (/^\.+$/.test(trimmedFilename)) {
+      return 'file';
+    }
+
     // Replace characters that are invalid in Windows/macOS/Linux filenames.
     const illegalChars = /[\/\?<>\\:\*\|":]/g;
-    const sanitized = filename.replace(illegalChars, '_');
+    const sanitized = trimmedFilename.replace(illegalChars, '_');
     
     // Truncate filename to a reasonable length to avoid issues with path limits.
     const maxLength = 200;
@@ -351,3 +358,5 @@ export const usePeer = () => {
   }
   return context;
 };
+
+    
