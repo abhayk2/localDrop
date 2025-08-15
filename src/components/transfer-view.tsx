@@ -44,28 +44,35 @@ function InitialView() {
   }
 
   return (
-    <Card className="w-full max-w-md shadow-lg">
-      <CardHeader>
-        <CardTitle>Start a Transfer</CardTitle>
+    <Card className="w-full max-w-md shadow-lg bg-card border-none">
+      <CardHeader className="text-center">
+        <CardTitle className="text-2xl">Start a Transfer</CardTitle>
         <CardDescription>Send or receive a file from another device on your network.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isJoining ? (
             <form onSubmit={handleJoinRoom} className="space-y-4">
                  <div className="grid w-full max-w-sm items-center gap-1.5">
-                    <Label htmlFor="join-code">Enter Code</Label>
-                    <Input id="join-code" value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="e.g. A1B2C3" required />
+                    <Label htmlFor="join-code" className="sr-only">Enter Code</Label>
+                    <Input 
+                      id="join-code" 
+                      value={joinCode} 
+                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())} 
+                      placeholder="Enter 6-digit code" 
+                      required 
+                      className="text-center text-lg tracking-widest h-12"
+                    />
                 </div>
-                <Button type="submit" className="w-full">Join</Button>
-                <Button variant="link" onClick={() => setIsJoining(false)} className="w-full">Cancel</Button>
+                <Button type="submit" className="w-full h-12 text-base">Join</Button>
+                <Button variant="ghost" onClick={() => setIsJoining(false)} className="w-full">Cancel</Button>
             </form>
         ) : (
             <div className="grid grid-cols-2 gap-4">
-                <Button onClick={handleCreateRoom} size="lg" className="h-24 flex-col gap-2">
+                <Button onClick={handleCreateRoom} size="lg" className="h-24 flex-col gap-2 text-lg">
                     <Share2 />
                     Send File
                 </Button>
-                <Button onClick={handleJoinClick} variant="outline" size="lg" className="h-24 flex-col gap-2">
+                <Button onClick={handleJoinClick} variant="secondary" size="lg" className="h-24 flex-col gap-2 text-lg">
                     <Download />
                     Receive File
                 </Button>
@@ -80,7 +87,7 @@ function TransferInProgress() {
     const { role } = usePeer();
 
     return (
-        <Card className="w-full max-w-md shadow-lg">
+        <Card className="w-full max-w-md shadow-lg bg-card border-none">
             {role === 'sender' ? <SenderView /> : <ReceiverView />}
         </Card>
     );
@@ -91,7 +98,6 @@ function SenderView() {
     const { file, setFile, status, progress, startSending, error, isPeerConnected } = usePeer();
 
     useEffect(() => {
-        // If a peer is connected and we have a file, try to start sending.
         if(isPeerConnected && file && (status === 'connecting' || status === 'idle')){
             startSending();
         }
@@ -105,23 +111,23 @@ function SenderView() {
     if (status === 'idle' || status === 'connecting') {
         return (
             <>
-                <CardHeader>
+                <CardHeader className="text-center">
                     <CardTitle>Send File</CardTitle>
                     <CardDescription>
-                        Your transfer code is ready. Ask the receiver to enter this code.
+                        Ask the receiver to enter this code on their device.
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="text-center space-y-4">
-                    <div className="text-4xl font-bold tracking-widest bg-muted p-4 rounded-lg">
+                <CardContent className="text-center space-y-6">
+                    <div className="text-5xl font-bold tracking-widest bg-background/50 dark:bg-background p-4 rounded-lg">
                         {roomId}
                     </div>
                      <div className="grid w-full max-w-sm items-center gap-1.5 pt-4">
-                        <Label htmlFor="file-upload">1. Select File to Send</Label>
-                        <Input id="file-upload" type="file" onChange={(e) => e.target.files && setFile(e.target.files[0])} disabled={!!file} />
+                        <Label htmlFor="file-upload" className="sr-only">Select File to Send</Label>
+                        <Input id="file-upload" type="file" onChange={(e) => e.target.files && setFile(e.target.files[0])} disabled={!!file} className="h-11" />
                     </div>
                     <div className="flex items-center justify-center space-x-2 pt-2">
                       <Loader2 className="h-4 w-4 animate-spin" /> 
-                      <p className="text-muted-foreground">2. Waiting for receiver to connect...</p>
+                      <p className="text-muted-foreground">Waiting for receiver...</p>
                     </div>
                 </CardContent>
             </>
