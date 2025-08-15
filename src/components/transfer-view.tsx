@@ -72,7 +72,12 @@ function InitialView() {
                     <Share2 />
                     Send
                 </Button>
-                <Button onClick={handleJoinClick} variant="secondary" size="lg" className="h-28 flex-col gap-2 text-lg">
+                <Button 
+                  onClick={handleJoinClick} 
+                  variant="secondary" 
+                  size="lg" 
+                  className="h-28 flex-col gap-2 text-lg bg-black text-white hover:bg-gray-800 dark:bg-secondary dark:text-secondary-foreground"
+                >
                     <Download />
                     Receive
                 </Button>
