@@ -59,8 +59,9 @@ body {
   }
   body {
     @apply bg-background text-foreground;
+    background: linear-gradient(to bottom right, #d1232a, #1e3a8a);
   }
   .dark body {
-    background: linear-gradient(to bottom, #020c1a, #000a1a);
+    background: linear-gradient(to bottom right, #d1232a, #1e3a8a);
   }
 }
