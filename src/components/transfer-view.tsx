@@ -57,9 +57,14 @@ function InitialView() {
                     <Input 
                       id="join-code" 
                       value={joinCode} 
-                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())} 
+                      onChange={(e) => {
+                        // Allow only alphanumeric characters and convert to uppercase
+                        const sanitized = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                        setJoinCode(sanitized);
+                      }}
                       placeholder="ENTER CODE" 
-                      required 
+                      required
+                      maxLength={6}
                       className="text-center text-2xl tracking-[0.3em] h-14 font-bold"
                     />
                 </div>
@@ -197,7 +202,7 @@ function ReceiverView() {
              <CardContent className="p-6 text-center space-y-4">
                 <CheckCircle className="mx-auto h-16 w-16 text-green-500" />
                 <h3 className="text-xl font-semibold">File Received!</h3>
-                 <p className="text-muted-foreground">{fileMetadata?.name}</p>
+                <p className="text-muted-foreground">{fileMetadata?.name}</p>
                  <div className="flex flex-col gap-2">
                     <Button onClick={downloadFile} size="lg">
                         <Download className="mr-2" />
@@ -223,3 +228,5 @@ function ErrorView({ message }: {message: string}) {
         </CardContent>
     )
 }
+
+    

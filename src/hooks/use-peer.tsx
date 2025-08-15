@@ -4,6 +4,9 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { useP2P } from '@/components/p2p-provider';
 
 const CHUNK_SIZE = 256 * 1024; // 256KB
+const HIGH_WATER_MARK = CHUNK_SIZE * 2;
+const LOW_WATER_MARK = CHUNK_SIZE;
+
 
 type PeerRole = 'sender' | 'receiver';
 
@@ -98,6 +101,10 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setStatus('transferring');
             } else if (message.type === 'transfer-complete') {
                 setStatus('done');
+            } else if (message.type === 'cancel-transfer') {
+                setError('Sender canceled the transfer.');
+                setStatus('error');
+                receivedBuffers.current = []; // Clear partial data
             }
         } catch (e) {
             console.error("Failed to parse message", e)
@@ -149,25 +156,49 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const fileReader = new FileReader();
     let offset = 0;
 
+    const readSlice = (o: number) => {
+        const slice = file.slice(o, o + CHUNK_SIZE);
+        fileReader.readAsArrayBuffer(slice);
+    };
+
+    const sendChunk = () => {
+        if (!dataChannel.current || dataChannel.current.readyState !== 'open') {
+            setError('Data channel closed unexpectedly.');
+            setStatus('error');
+            return;
+        }
+
+        while (offset < file.size) {
+            if (dataChannel.current.bufferedAmount > HIGH_WATER_MARK) {
+                // Wait for the buffer to drain
+                dataChannel.current.onbufferedamountlow = () => {
+                    dataChannel.current!.onbufferedamountlow = null; // Fire only once
+                    sendChunk(); // Resume sending
+                };
+                return;
+            }
+
+            const slice = file.slice(offset, offset + CHUNK_SIZE);
+            fileReader.readAsArrayBuffer(slice);
+            offset += slice.size;
+            setProgress((offset / file.size) * 100);
+        }
+
+        if (offset >= file.size) {
+            dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
+            setStatus('done');
+        }
+    };
+
+
     fileReader.onload = (e) => {
-      if (!e.target?.result || dataChannel.current?.readyState !== 'open') {
-        setError('Data channel closed during transfer.');
-        setStatus('error');
+      if (!e.target?.result || !dataChannel.current || dataChannel.current.readyState !== 'open') {
         return;
       };
-
-      const chunk = e.target.result as ArrayBuffer;
+      
       try {
-        dataChannel.current?.send(chunk);
-        offset += chunk.byteLength;
-        setProgress((offset / file.size) * 100);
-
-        if (offset < file.size) {
-          readSlice(offset);
-        } else {
-          dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
-          setStatus('done');
-        }
+        const chunk = e.target.result as ArrayBuffer;
+        dataChannel.current.send(chunk);
       } catch (error) {
           setError('Failed to send file chunk.');
           setStatus('error');
@@ -179,13 +210,9 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setError('Error reading file.');
         setStatus('error');
     }
-
-    const readSlice = (o: number) => {
-      const slice = file.slice(o, o + CHUNK_SIZE);
-      fileReader.readAsArrayBuffer(slice);
-    };
-
-    readSlice(0);
+    
+    // Start the process
+    sendChunk();
   };
 
 
@@ -250,8 +277,18 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setStatus('error');
       eventSource.close();
     };
+    
+    // Cancellation cleanup
+    const handleBeforeUnload = () => {
+        if (dataChannel.current && dataChannel.current.readyState === 'open') {
+            dataChannel.current.send(JSON.stringify({ type: 'cancel-transfer' }));
+        }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
 
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       pc.current?.close();
       pc.current = null;
       dataChannel.current?.close();
@@ -288,3 +325,5 @@ export const usePeer = () => {
   }
   return context;
 };
+
+    
