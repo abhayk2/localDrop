@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useP2P } from './p2p-provider';
 import { usePeer } from '@/hooks/use-peer';
-import { Loader2, Share2, CheckCircle, XCircle, File as FileIcon, Download } from 'lucide-react';
+import { Loader2, Share2, CheckCircle, XCircle, File as FileIcon, Download, Copy } from 'lucide-react';
 import { Progress } from './ui/progress';
+import { useToast } from '@/hooks/use-toast';
 
 export function TransferView() {
   const { roomId } = useP2P();
@@ -44,7 +45,7 @@ function InitialView() {
   }
 
   return (
-    <Card className="w-full max-w-md shadow-lg bg-card border-none">
+    <Card className="w-full max-w-md shadow-lg bg-card/80 backdrop-blur-sm border-none">
       <CardHeader className="text-center">
         <CardTitle className="text-2xl">Start a Transfer</CardTitle>
         <CardDescription>Send or receive a file from another device on your network.</CardDescription>
@@ -97,7 +98,7 @@ function TransferInProgress() {
     const { role } = usePeer();
 
     return (
-        <Card className="w-full max-w-md shadow-lg bg-card border-none">
+        <Card className="w-full max-w-md shadow-lg bg-card/80 backdrop-blur-sm border-none">
             {role === 'sender' ? <SenderView /> : <ReceiverView />}
         </Card>
     );
@@ -106,13 +107,22 @@ function TransferInProgress() {
 function SenderView() {
     const { roomId } = useP2P();
     const { file, setFile, status, progress, startSending, error, isPeerConnected } = usePeer();
+    const { toast } = useToast();
 
     useEffect(() => {
-        if(isPeerConnected && file && (status === 'connecting' || status === 'idle')){
+        if(isPeerConnected && file && status === 'idle'){
             startSending();
         }
     }, [isPeerConnected, file, status, startSending]);
 
+    const handleCopyCode = () => {
+        if (!roomId) return;
+        navigator.clipboard.writeText(roomId);
+        toast({
+            title: "Copied!",
+            description: "Room code copied to clipboard.",
+        });
+    }
 
     if (error) {
         return <ErrorView message={error} />
@@ -128,17 +138,29 @@ function SenderView() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="text-center space-y-6">
-                    <div className="text-5xl font-bold tracking-[0.2em] bg-background p-4 rounded-lg">
-                        {roomId}
+                    <div 
+                      className="text-5xl font-bold tracking-[0.2em] bg-background/50 p-4 rounded-lg flex items-center justify-center gap-4 cursor-pointer hover:bg-background/80"
+                      onClick={handleCopyCode}
+                      title="Click to copy"
+                    >
+                        <span>{roomId}</span>
+                        <Copy className="h-8 w-8 text-muted-foreground" />
                     </div>
                      <div className="grid w-full items-center gap-1.5 pt-4">
                         <Label htmlFor="file-upload" className="sr-only">Select File to Send</Label>
                         <Input id="file-upload" type="file" onChange={(e) => e.target.files && setFile(e.target.files[0])} disabled={!!file} className="h-12 text-base" />
                     </div>
-                    <div className="flex items-center justify-center space-x-2 pt-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> 
-                      <p className="text-muted-foreground">Waiting for receiver to connect...</p>
-                    </div>
+                    {!file && (
+                      <div className="flex items-center justify-center space-x-2 pt-2">
+                        <p className="text-muted-foreground">Select a file to begin</p>
+                      </div>
+                    )}
+                    {file && !isPeerConnected && (
+                      <div className="flex items-center justify-center space-x-2 pt-2">
+                        <Loader2 className="h-4 w-4 animate-spin" /> 
+                        <p className="text-muted-foreground">Waiting for receiver to connect...</p>
+                      </div>
+                    )}
                 </CardContent>
             </>
         )
@@ -228,5 +250,3 @@ function ErrorView({ message }: {message: string}) {
         </CardContent>
     )
 }
-
-    

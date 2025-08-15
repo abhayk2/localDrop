@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useP2P } from '@/components/p2p-provider';
+import { useToast } from './use-toast';
 
 const CHUNK_SIZE = 256 * 1024; // 256KB
 const HIGH_WATER_MARK = CHUNK_SIZE * 2;
@@ -28,6 +29,7 @@ const PeerContext = createContext<PeerState | null>(null);
 
 export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { roomId, sendSignal, eventSource } = useP2P();
+  const { toast } = useToast();
   const [role, setRole] = useState<PeerRole | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
@@ -98,7 +100,12 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (message.type === 'file-metadata') {
                 setFileMetadata(message.payload);
                 receivedBuffers.current = [];
-                setStatus('transferring');
+                // For zero-byte files, we are done immediately
+                if (message.payload.size === 0) {
+                    setStatus('done');
+                } else {
+                    setStatus('transferring');
+                }
             } else if (message.type === 'transfer-complete') {
                 setStatus('done');
             } else if (message.type === 'cancel-transfer') {
@@ -153,6 +160,14 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       payload: { name: file.name, size: file.size, type: file.type }
     }));
 
+    // Handle zero-byte files
+    if (file.size === 0) {
+        dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
+        setStatus('done');
+        return;
+    }
+
+
     const fileReader = new FileReader();
     let offset = 0;
 
@@ -160,36 +175,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const slice = file.slice(o, o + CHUNK_SIZE);
         fileReader.readAsArrayBuffer(slice);
     };
-
-    const sendChunk = () => {
-        if (!dataChannel.current || dataChannel.current.readyState !== 'open') {
-            setError('Data channel closed unexpectedly.');
-            setStatus('error');
-            return;
-        }
-
-        while (offset < file.size) {
-            if (dataChannel.current.bufferedAmount > HIGH_WATER_MARK) {
-                // Wait for the buffer to drain
-                dataChannel.current.onbufferedamountlow = () => {
-                    dataChannel.current!.onbufferedamountlow = null; // Fire only once
-                    sendChunk(); // Resume sending
-                };
-                return;
-            }
-
-            const slice = file.slice(offset, offset + CHUNK_SIZE);
-            fileReader.readAsArrayBuffer(slice);
-            offset += slice.size;
-            setProgress((offset / file.size) * 100);
-        }
-
-        if (offset >= file.size) {
-            dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
-            setStatus('done');
-        }
-    };
-
 
     fileReader.onload = (e) => {
       if (!e.target?.result || !dataChannel.current || dataChannel.current.readyState !== 'open') {
@@ -199,6 +184,24 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const chunk = e.target.result as ArrayBuffer;
         dataChannel.current.send(chunk);
+
+        offset += chunk.byteLength;
+        setProgress((offset / file.size) * 100);
+
+        if (offset < file.size) {
+            // If the buffer is full, wait for it to drain
+            if (dataChannel.current.bufferedAmount > HIGH_WATER_MARK) {
+                dataChannel.current.onbufferedamountlow = () => {
+                    dataChannel.current!.onbufferedamountlow = null;
+                    readSlice(offset);
+                };
+                return;
+            }
+            readSlice(offset);
+        } else {
+            dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
+            setStatus('done');
+        }
       } catch (error) {
           setError('Failed to send file chunk.');
           setStatus('error');
@@ -212,12 +215,17 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     
     // Start the process
-    sendChunk();
+    readSlice(0);
   };
 
 
   const downloadFile = () => {
     if (status !== 'done' || !fileMetadata) return;
+
+    toast({
+        title: "Download Started",
+        description: "Your file is being saved.",
+    });
 
     const receivedBlob = new Blob(receivedBuffers.current, {type: fileMetadata.type});
     const url = URL.createObjectURL(receivedBlob);
@@ -244,8 +252,8 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (msg.type === 'peer-connected') {
           setIsPeerConnected(true);
-          // If we are the sender and the peer connects, we can now create an offer.
-          if(role === 'sender' && pc.current?.signalingState === 'stable') {
+          // If we are the sender and have a file, we can now create an offer.
+          if(role === 'sender' && file && pc.current?.signalingState === 'stable') {
               startSending();
           }
       } else if (msg.type === 'peer-disconnected') {
@@ -295,7 +303,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       dataChannel.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventSource, role]);
+  }, [eventSource, role, file]);
 
   const value = useMemo(() => ({
     file,
@@ -325,5 +333,3 @@ export const usePeer = () => {
   }
   return context;
 };
-
-    
