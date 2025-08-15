@@ -12,12 +12,12 @@ export default function Home() {
       </header>
 
       <main className="flex-grow flex flex-col items-center justify-center p-4">
-        <div className="flex items-center gap-3 mb-6">
+        <a href="/" className="flex items-center gap-3 mb-6 no-underline text-current">
           <Wifi className="h-10 w-10 text-primary" />
           <h1 className="text-5xl font-bold tracking-tight text-center font-headline">
             LocalDrop
           </h1>
-        </div>
+        </a>
         <P2PProvider>
           <PeerProvider>
             <TransferView />
