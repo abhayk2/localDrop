@@ -187,10 +187,13 @@ function ReceiverView() {
                 <CheckCircle className="mx-auto h-16 w-16 text-green-500" />
                 <h3 className="text-xl font-semibold">File Received!</h3>
                  <p className="text-muted-foreground">{fileMetadata?.name}</p>
-                <Button onClick={downloadFile} size="lg">
-                    <Download className="mr-2" />
-                    Save File
-                </Button>
+                 <div className="flex flex-col gap-2">
+                    <Button onClick={downloadFile} size="lg">
+                        <Download className="mr-2" />
+                        Save File
+                    </Button>
+                    <Button onClick={() => window.location.reload()} variant="outline">Start New Transfer</Button>
+                 </div>
             </CardContent>
         )
     }

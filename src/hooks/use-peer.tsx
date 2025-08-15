@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useP2P } from '@/components/p2p-provider';
 
-const CHUNK_SIZE = 64 * 1024; // 64KB
+const CHUNK_SIZE = 256 * 1024; // 256KB
 
 type PeerRole = 'sender' | 'receiver';
 
@@ -18,6 +18,7 @@ interface PeerState {
   role: PeerRole | null;
   setRole: (role: PeerRole) => void;
   error: string | null;
+  fileMetadata: { name: string; size: number, type: string } | null;
 }
 
 const PeerContext = createContext<PeerState | null>(null);
@@ -30,11 +31,12 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'transferring' | 'done' | 'error'>('idle');
   const [isPeerConnected, setIsPeerConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileMetadata, setFileMetadata] = useState<{ name: string; size: number, type: string } | null>(null);
+
 
   const pc = useRef<RTCPeerConnection | null>(null);
   const dataChannel = useRef<RTCDataChannel | null>(null);
   const receivedBuffers = useRef<ArrayBuffer[]>([]);
-  const fileMetadata = useRef<{ name: string; size: number, type: string } | null>(null);
 
 
   const initializePeerConnection = () => {
@@ -91,7 +93,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const message = JSON.parse(data);
             if (message.type === 'file-metadata') {
-                fileMetadata.current = message.payload;
+                setFileMetadata(message.payload);
                 receivedBuffers.current = [];
                 setStatus('transferring');
             } else if (message.type === 'transfer-complete') {
@@ -102,9 +104,9 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     } else {
         receivedBuffers.current.push(data);
-        const receivedSize = receivedBuffers.current.reduce((acc, buffer) => acc + buffer.byteLength, 0);
-        if (fileMetadata.current) {
-            const currentProgress = (receivedSize / fileMetadata.current.size) * 100;
+        if (fileMetadata) {
+            const receivedSize = receivedBuffers.current.reduce((acc, buffer) => acc + buffer.byteLength, 0);
+            const currentProgress = (receivedSize / fileMetadata.size) * 100;
             setProgress(currentProgress);
         }
     }
@@ -188,13 +190,13 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 
   const downloadFile = () => {
-    if (status !== 'done' || !fileMetadata.current) return;
+    if (status !== 'done' || !fileMetadata) return;
 
-    const receivedBlob = new Blob(receivedBuffers.current, {type: fileMetadata.current.type});
+    const receivedBlob = new Blob(receivedBuffers.current, {type: fileMetadata.type});
     const url = URL.createObjectURL(receivedBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileMetadata.current.name;
+    a.download = fileMetadata.name;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
@@ -269,7 +271,8 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     role,
     setRole,
     error,
-  }), [file, progress, status, isPeerConnected, startSending, downloadFile, role, setRole, error]);
+    fileMetadata,
+  }), [file, progress, status, isPeerConnected, startSending, downloadFile, role, setRole, error, fileMetadata]);
 
   return (
     <PeerContext.Provider value={value}>
