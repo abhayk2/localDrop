@@ -61,6 +61,6 @@ body {
     @apply bg-background text-foreground;
   }
   .dark body {
-    background: linear-gradient(to bottom, #0a1f44, #001a33);
+    background: linear-gradient(to bottom, #020c1a, #000a1a);
   }
 }
