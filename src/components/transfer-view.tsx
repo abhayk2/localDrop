@@ -58,23 +58,23 @@ function InitialView() {
                       id="join-code" 
                       value={joinCode} 
                       onChange={(e) => setJoinCode(e.target.value.toUpperCase())} 
-                      placeholder="Enter 6-digit code" 
+                      placeholder="ENTER CODE" 
                       required 
-                      className="text-center text-lg tracking-widest h-12"
+                      className="text-center text-2xl tracking-[0.3em] h-14 font-bold"
                     />
                 </div>
                 <Button type="submit" className="w-full h-12 text-base">Join</Button>
                 <Button variant="ghost" onClick={() => setIsJoining(false)} className="w-full">Cancel</Button>
             </form>
         ) : (
-            <div className="grid grid-cols-2 gap-4">
-                <Button onClick={handleCreateRoom} size="lg" className="h-24 flex-col gap-2 text-lg">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Button onClick={handleCreateRoom} size="lg" className="h-28 flex-col gap-2 text-lg">
                     <Share2 />
-                    Send File
+                    Send
                 </Button>
-                <Button onClick={handleJoinClick} variant="secondary" size="lg" className="h-24 flex-col gap-2 text-lg">
+                <Button onClick={handleJoinClick} variant="secondary" size="lg" className="h-28 flex-col gap-2 text-lg">
                     <Download />
-                    Receive File
+                    Receive
                 </Button>
             </div>
         )}
@@ -112,22 +112,22 @@ function SenderView() {
         return (
             <>
                 <CardHeader className="text-center">
-                    <CardTitle>Send File</CardTitle>
+                    <CardTitle>Your Code</CardTitle>
                     <CardDescription>
                         Ask the receiver to enter this code on their device.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="text-center space-y-6">
-                    <div className="text-5xl font-bold tracking-widest bg-background/50 dark:bg-background p-4 rounded-lg">
+                    <div className="text-5xl font-bold tracking-[0.2em] bg-background p-4 rounded-lg">
                         {roomId}
                     </div>
-                     <div className="grid w-full max-w-sm items-center gap-1.5 pt-4">
+                     <div className="grid w-full items-center gap-1.5 pt-4">
                         <Label htmlFor="file-upload" className="sr-only">Select File to Send</Label>
-                        <Input id="file-upload" type="file" onChange={(e) => e.target.files && setFile(e.target.files[0])} disabled={!!file} className="h-11" />
+                        <Input id="file-upload" type="file" onChange={(e) => e.target.files && setFile(e.target.files[0])} disabled={!!file} className="h-12 text-base" />
                     </div>
                     <div className="flex items-center justify-center space-x-2 pt-2">
                       <Loader2 className="h-4 w-4 animate-spin" /> 
-                      <p className="text-muted-foreground">Waiting for receiver...</p>
+                      <p className="text-muted-foreground">Waiting for receiver to connect...</p>
                     </div>
                 </CardContent>
             </>

@@ -8,7 +8,7 @@ body {
 
 @layer base {
   :root {
-    --background: 0 0% 98%; /* Almost white */
+    --background: 220 20% 97%; /* Light Grayish Blue */
     --foreground: 222.2 84% 4.9%; /* Dark blue/black for text */
     --card: 0 0% 100%; /* White */
     --card-foreground: 222.2 84% 4.9%;
@@ -16,8 +16,8 @@ body {
     --popover-foreground: 222.2 84% 4.9%;
     --primary: 217 91% 60%; /* Bright blue */
     --primary-foreground: 0 0% 98%; /* White text on primary */
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 84% 4.9%;
+    --secondary: 220 15% 90%; /* Light Gray */
+    --secondary-foreground: 222.2 47.4% 11.2%; /* Dark text on secondary */
     --muted: 210 40% 96.1%;
     --muted-foreground: 215 20.2% 65.1%;
     --accent: 210 40% 96.1%;
@@ -39,7 +39,7 @@ body {
     --popover-foreground: 0 0% 98%;
     --primary: 217 91% 60%; /* Bright blue */
     --primary-foreground: 0 0% 98%; /* White text on primary */
-    --secondary: 222.2 47.4% 18.2%; /* Darker blue for secondary elements */
+    --secondary: 222.2 47.4% 22.2%; /* Darker gray-blue for secondary elements */
     --secondary-foreground: 0 0% 98%;
     --muted: 222.2 47.4% 18.2%;
     --muted-foreground: 215 20.2% 65.1%;
@@ -47,8 +47,8 @@ body {
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
+    --border: 217.2 32.6% 22.5%; /* Darker border */
+    --input: 217.2 32.6% 22.5%;
     --ring: 217 91% 60%;
   }
 }
