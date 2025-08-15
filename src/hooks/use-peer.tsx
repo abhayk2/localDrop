@@ -29,14 +29,16 @@ interface PeerState {
 const PeerContext = createContext<PeerState | null>(null);
 
 function sanitizeFilename(filename: string): string {
+    // First, trim whitespace from the start and end of the filename.
     const trimmedFilename = filename.trim();
     
-    // Replace names that are only dots (e.g., "..", "...")
+    // Check if the filename consists only of dots (e.g., "..", "...") and replace it.
     if (/^\.+$/.test(trimmedFilename)) {
       return 'file';
     }
 
     // Replace characters that are invalid in Windows/macOS/Linux filenames.
+    // Invalid characters are: / \ ? % * : | " < >
     const illegalChars = /[\/\?<>\\:\*\|":]/g;
     const sanitized = trimmedFilename.replace(illegalChars, '_');
     
@@ -88,8 +90,10 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setStatus('connected');
         }
          if (newPc.connectionState === 'failed' || newPc.connectionState === 'disconnected') {
-            setError('Peer connection failed. Please try again.');
-            setStatus('error');
+            if (status !== 'done' && status !== 'error') {
+              setError('Peer connection failed. Please try again.');
+              setStatus('error');
+            }
         }
     }
 
@@ -152,7 +156,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const startSending = () => {
-    if (role !== 'sender' || !file || !pc.current || !isPeerConnected) return;
+    if (role !== 'sender' || !file || !pc.current || pc.current.signalingState !== 'stable') return;
 
     dataChannel.current = pc.current.createDataChannel('file-transfer');
     setupDataChannel();
@@ -288,10 +292,12 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setStatus('error');
            }
       } else if (msg.type === 'offer' && role === 'receiver' && pc.current) {
-        await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        const answer = await pc.current.createAnswer();
-        await pc.current.setLocalDescription(answer);
-        sendSignal({ type: 'answer', sdp: pc.current.localDescription });
+        if (pc.current.signalingState === 'stable') {
+          await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          const answer = await pc.current.createAnswer();
+          await pc.current.setLocalDescription(answer);
+          sendSignal({ type: 'answer', sdp: pc.current.localDescription });
+        }
       } else if (msg.type === 'answer' && role === 'sender' && pc.current) {
         if (pc.current.signalingState === 'have-local-offer') {
           await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
@@ -342,7 +348,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole,
     error,
     fileMetadata,
-  }), [file, progress, status, isPeerConnected, startSending, downloadFile, role, setRole, error, fileMetadata]);
+  }), [file, progress, status, isPeerConnected, role, error, fileMetadata, setRole, downloadFile, startSending]);
 
   return (
     <PeerContext.Provider value={value}>
@@ -359,4 +365,5 @@ export const usePeer = () => {
   return context;
 };
 
+    
     
