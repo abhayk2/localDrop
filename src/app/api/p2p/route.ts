@@ -64,16 +64,16 @@ export async function POST(req: NextRequest) {
 
 
   const room = getRoom(roomId);
-  let target: AbortController | undefined;
+  let targetController: ReadableStreamDefaultController | undefined;
 
   if (type === 'sender') {
-    target = room.receiver;
+    targetController = room.receiver;
   } else if (type === 'receiver') {
-    target = room.sender;
+    targetController = room.sender;
   }
 
-  if (target) {
-    target.enqueue(`data: ${JSON.stringify(data)}\n\n`);
+  if (targetController) {
+    targetController.enqueue(`data: ${JSON.stringify(data)}\n\n`);
   } else {
     // If the target is not connected yet, queue the message
     getQueue(roomId).push(data);
