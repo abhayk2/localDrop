@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -26,6 +27,23 @@ interface PeerState {
 }
 
 const PeerContext = createContext<PeerState | null>(null);
+
+function sanitizeFilename(filename: string): string {
+    // Replace characters that are invalid in Windows/macOS/Linux filenames.
+    const illegalChars = /[\/\?<>\\:\*\|":]/g;
+    const sanitized = filename.replace(illegalChars, '_');
+    
+    // Truncate filename to a reasonable length to avoid issues with path limits.
+    const maxLength = 200;
+    if (sanitized.length > maxLength) {
+        const extension = sanitized.split('.').pop() || '';
+        const baseName = sanitized.substring(0, sanitized.length - extension.length -1);
+        return baseName.substring(0, maxLength - extension.length - 4) + '...' + (extension ? '.' + extension : '');
+    }
+
+    return sanitized;
+}
+
 
 export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { roomId, sendSignal, eventSource } = useP2P();
@@ -231,7 +249,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const url = URL.createObjectURL(receivedBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileMetadata.name;
+    a.download = sanitizeFilename(fileMetadata.name);
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
