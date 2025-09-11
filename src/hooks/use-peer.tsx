@@ -61,43 +61,32 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isPolite = useRef(false);
   
   const candidateBuffer = useRef<RTCIceCandidate[]>([]);
-
+  
   const startSending = useCallback(() => {
-    if (role !== 'sender' || !file || !pc.current) return;
-    setStatus('connecting');
-    // The onnegotiationneeded event on the peer connection will fire,
-    // which then creates the offer and starts the handshake.
-    // This is a dummy transceiver to trigger the event.
+    if (!pc.current) return;
     pc.current.addTransceiver('file', {direction: 'sendonly'});
-  }, [role, file]);
-
+  }, []);
 
   useEffect(() => {
     if (!eventSource || !role) {
       return;
     }
 
-    const initializePeerConnection = () => {
-        if (pc.current) {
-            pc.current.close();
-        }
-
+    // Only initialize if the peer connection doesn't exist
+    if (!pc.current) {
         const newPc = new RTCPeerConnection({
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
         });
         pc.current = newPc;
         isPolite.current = (role === 'receiver');
-        candidateBuffer.current = [];
-        isNegotiating.current = false;
 
-        newPc.onnegotiationneeded = async () => {
+        pc.current.onnegotiationneeded = async () => {
             if(isNegotiating.current) return;
             try {
                 isNegotiating.current = true;
-                // Senders are impolite and create the offer.
                 if (!isPolite.current) {
-                    await newPc.setLocalDescription(await newPc.createOffer());
-                    sendSignal({ type: 'sdp', sdp: newPc.localDescription });
+                    await pc.current!.setLocalDescription(await pc.current!.createOffer());
+                    sendSignal({ type: 'sdp', sdp: pc.current!.localDescription });
                 }
             } catch(err) {
                 console.error("Negotiation needed error:", err);
@@ -108,17 +97,14 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         }
 
-        newPc.onicecandidate = (event) => {
+        pc.current.onicecandidate = (event) => {
           if (event.candidate) {
             sendSignal({ type: 'ice-candidate', candidate: event.candidate });
           }
         };
         
-        newPc.onconnectionstatechange = () => {
-            switch (newPc.connectionState) {
-                case 'connected':
-                    // The data channel 'open' event is a more reliable indicator.
-                    break;
+        pc.current.onconnectionstatechange = () => {
+            switch (pc.current!.connectionState) {
                 case 'disconnected':
                 case 'failed':
                     if (status !== 'done' && status !== 'error') {
@@ -133,34 +119,69 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         }
 
-        newPc.ondatachannel = (event) => {
+        pc.current.ondatachannel = (event) => {
             dataChannel.current = event.channel;
             setupDataChannel(dataChannel.current);
         };
     }
-
-    const setupDataChannel = (dc: RTCDataChannel) => {
-        dc.onopen = () => {
-          setStatus('connected');
-          setIsPeerConnected(true);
+    
+    const sendFile = () => {
+        if (!file || !dataChannel.current || dataChannel.current.readyState !== 'open') {
+            return;
         };
-        dc.onclose = () => {
-          if(status !== 'done' && status !== 'error') {
-             setError('The other user disconnected.');
-             setStatus('error');
-             setIsPeerConnected(false);
+
+        setStatus('transferring');
+        dataChannel.current.send(JSON.stringify({
+          type: 'file-metadata',
+          payload: { name: file.name, size: file.size, type: file.type }
+        }));
+
+        if (file.size === 0) {
+            dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
+            setStatus('done');
+            return;
+        }
+
+        const fileReader = new FileReader();
+        let offset = 0;
+        const readSlice = (o: number) => {
+            const slice = file.slice(o, o + CHUNK_SIZE);
+            fileReader.readAsArrayBuffer(slice);
+        };
+
+        fileReader.onload = (e) => {
+          if (!e.target?.result || !dataChannel.current || dataChannel.current.readyState !== 'open') return;
+          try {
+            const chunk = e.target.result as ArrayBuffer;
+            dataChannel.current.send(chunk);
+            offset += chunk.byteLength;
+            setProgress((offset / file.size) * 100);
+            if (offset < file.size) {
+                if (dataChannel.current.bufferedAmount > HIGH_WATER_MARK) {
+                    dataChannel.current.onbufferedamountlow = () => {
+                        dataChannel.current!.onbufferedamountlow = null;
+                        if(offset < file.size) readSlice(offset);
+                    };
+                    return;
+                }
+                readSlice(offset);
+            } else {
+                dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
+                setStatus('done');
+            }
+          } catch (error) {
+              setError('Failed to send file chunk.');
+              setStatus('error');
+              console.error(error);
           }
         };
-        dc.onmessage = (event) => {
-            handleDataChannelMessage(event.data);
-        };
-        dc.onerror = (err) => {
-            console.error("Data channel error:", err);
-            setError("An error occurred during transfer.");
-            setStatus("error");
+        fileReader.onerror = () => {
+            setError('Error reading file.');
+            setStatus('error');
         }
-    };
-
+        readSlice(0);
+    }
+    
     const handleDataChannelMessage = (data: any) => {
        if (typeof data === 'string') {
           try {
@@ -187,8 +208,32 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
       }
     }
+
+    const setupDataChannel = (dc: RTCDataChannel) => {
+        dc.onopen = () => {
+          setStatus('connected');
+          setIsPeerConnected(true);
+          if(role === 'sender' && file) {
+              sendFile();
+          }
+        };
+        dc.onclose = () => {
+          if(status !== 'done' && status !== 'error') {
+             setError('The other user disconnected.');
+             setStatus('error');
+             setIsPeerConnected(false);
+          }
+        };
+        dc.onmessage = (event) => {
+            handleDataChannelMessage(event.data);
+        };
+        dc.onerror = (err) => {
+            console.error("Data channel error:", err);
+            setError("An error occurred during transfer.");
+            setStatus("error");
+        }
+    };
     
-    initializePeerConnection();
     setStatus('connecting');
     
     const handleMessage = async (event: MessageEvent) => {
@@ -199,7 +244,10 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!currentPc) return;
 
       if (msg.type === 'peer-connected') {
-          setIsPeerConnected(true);
+          if (role === 'sender' && !dataChannel.current) {
+            dataChannel.current = currentPc.createDataChannel('fileTransfer');
+            setupDataChannel(dataChannel.current);
+          }
       } else if (msg.type === 'peer-disconnected') {
            setIsPeerConnected(false);
            if (status !== 'done' && status !== 'error') {
@@ -210,14 +258,10 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const sdp = msg.sdp as RTCSessionDescription;
 
           const offerCollision = sdp.type === "offer" && (isNegotiating.current || currentPc.signalingState !== "stable");
-          isNegotiating.current = offerCollision;
-          if (offerCollision && isPolite.current) {
-             // Polite peer yields to the impolite peer's offer.
-             // This is a simplified model. A full implementation might require rollback.
-          } else if (offerCollision && !isPolite.current) {
-              return; // Impolite peer ignores offer if already negotiating
+          if (offerCollision && !isPolite.current) {
+              return; 
           }
-
+          isNegotiating.current = offerCollision;
 
           try {
               await currentPc.setRemoteDescription(sdp);
@@ -225,7 +269,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   await currentPc.setLocalDescription(await currentPc.createAnswer());
                   sendSignal({ type: 'sdp', sdp: currentPc.localDescription });
               }
-              // Process any buffered candidates
               while (candidateBuffer.current.length > 0) {
                   const candidate = candidateBuffer.current.shift();
                   await currentPc.addIceCandidate(candidate!);
@@ -279,73 +322,8 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
           dataChannel.current = null;
       }
     };
-  }, [eventSource, role, sendSignal, status, fileMetadata]);
+  }, [eventSource, role, sendSignal, status, file]);
   
-   const sendFile = useCallback(() => {
-    if (!file || !dataChannel.current || dataChannel.current.readyState !== 'open') {
-        setError("Data channel is not open. Cannot send file.");
-        setStatus("error");
-        return;
-    };
-
-    setStatus('transferring');
-    dataChannel.current.send(JSON.stringify({
-      type: 'file-metadata',
-      payload: { name: file.name, size: file.size, type: file.type }
-    }));
-
-    if (file.size === 0) {
-        dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
-        setStatus('done');
-        return;
-    }
-
-    const fileReader = new FileReader();
-    let offset = 0;
-    const readSlice = (o: number) => {
-        const slice = file.slice(o, o + CHUNK_SIZE);
-        fileReader.readAsArrayBuffer(slice);
-    };
-
-    fileReader.onload = (e) => {
-      if (!e.target?.result || !dataChannel.current || dataChannel.current.readyState !== 'open') return;
-      try {
-        const chunk = e.target.result as ArrayBuffer;
-        dataChannel.current.send(chunk);
-        offset += chunk.byteLength;
-        setProgress((offset / file.size) * 100);
-        if (offset < file.size) {
-            if (dataChannel.current.bufferedAmount > HIGH_WATER_MARK) {
-                dataChannel.current.onbufferedamountlow = () => {
-                    dataChannel.current!.onbufferedamountlow = null;
-                    if(offset < file.size) readSlice(offset);
-                };
-                return;
-            }
-            readSlice(offset);
-        } else {
-            dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
-            setStatus('done');
-        }
-      } catch (error) {
-          setError('Failed to send file chunk.');
-          setStatus('error');
-          console.error(error);
-      }
-    };
-    fileReader.onerror = () => {
-        setError('Error reading file.');
-        setStatus('error');
-    }
-    readSlice(0);
-  }, [file]);
-
-  useEffect(() => {
-    if (role === 'sender' && status === 'connected' && file) {
-      sendFile();
-    }
-  }, [status, role, file, sendFile]);
-
   const downloadFile = () => {
     if (status !== 'done' || !fileMetadata) return;
     toast({ title: "Download Started", description: "Your file is being saved." });
@@ -389,4 +367,3 @@ export const usePeer = () => {
   }
   return context;
 };
-
