@@ -273,8 +273,11 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // We only initialize the peer connection once we have a valid event source.
     initializePeerConnection();
+    
+    const currentPc = pc.current;
 
-    eventSource.onmessage = async (event) => {
+    const handleMessage = async (event: MessageEvent) => {
+      if (!currentPc) return;
       if (event.data.startsWith(':')) return; // Ignore keep-alive comments
       
       const msg = JSON.parse(event.data);
@@ -282,7 +285,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (msg.type === 'peer-connected') {
           setIsPeerConnected(true);
           // If we are the sender and have a file, we can now create an offer.
-          if(role === 'sender' && file && pc.current?.signalingState === 'stable') {
+          if(role === 'sender' && file && currentPc.signalingState === 'stable') {
               startSending();
           }
       } else if (msg.type === 'peer-disconnected') {
@@ -291,25 +294,27 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setError('The other user disconnected.');
                 setStatus('error');
            }
-      } else if (msg.type === 'offer' && role === 'receiver' && pc.current) {
-        if (pc.current.signalingState === 'stable') {
-          await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-          const answer = await pc.current.createAnswer();
-          await pc.current.setLocalDescription(answer);
-          sendSignal({ type: 'answer', sdp: pc.current.localDescription });
+      } else if (msg.type === 'offer' && role === 'receiver') {
+        if (currentPc.signalingState === 'stable') {
+          await currentPc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          const answer = await currentPc.createAnswer();
+          await currentPc.setLocalDescription(answer);
+          sendSignal({ type: 'answer', sdp: currentPc.localDescription });
         }
-      } else if (msg.type === 'answer' && role === 'sender' && pc.current) {
-        if (pc.current.signalingState === 'have-local-offer') {
-          await pc.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      } else if (msg.type === 'answer' && role === 'sender') {
+        if (currentPc.signalingState === 'have-local-offer') {
+          await currentPc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         }
-      } else if (msg.type === 'ice-candidate' && pc.current) {
+      } else if (msg.type === 'ice-candidate') {
         try {
-            await pc.current.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            await currentPc.addIceCandidate(new RTCIceCandidate(msg.candidate));
         } catch(e) {
             console.error("Error adding received ice candidate", e)
         }
       }
     };
+
+    eventSource.addEventListener('message', handleMessage);
 
     eventSource.onerror = () => {
       setError('Connection to signaling server lost.');
@@ -327,8 +332,9 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 
     return () => {
+      eventSource.removeEventListener('message', handleMessage);
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      pc.current?.close();
+      currentPc?.close();
       pc.current = null;
       dataChannel.current?.close();
       dataChannel.current = null;
