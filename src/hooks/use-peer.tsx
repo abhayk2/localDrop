@@ -57,140 +57,232 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const dataChannel = useRef<RTCDataChannel | null>(null);
   const receivedBuffers = useRef<ArrayBuffer[]>([]);
   
-  // Track negotiation state to avoid race conditions
   const isNegotiating = useRef(false);
-  // Polite peer flag - sender is impolite, receiver is polite
   const isPolite = useRef(false);
   
   const candidateBuffer = useRef<RTCIceCandidate[]>([]);
 
+  const startSending = useCallback(() => {
+    if (role !== 'sender' || !file || !pc.current) return;
+    setStatus('connecting');
+    // The onnegotiationneeded event on the peer connection will fire,
+    // which then creates the offer and starts the handshake.
+    // This is a dummy transceiver to trigger the event.
+    pc.current.addTransceiver('file', {direction: 'sendonly'});
+  }, [role, file]);
 
-  const initializePeerConnection = useCallback(() => {
-    if (pc.current) {
-        pc.current.close();
+
+  useEffect(() => {
+    if (!eventSource || !role) {
+      return;
     }
 
-    const newPc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
-    pc.current = newPc;
-    isPolite.current = (role === 'receiver');
-    candidateBuffer.current = [];
-
-    newPc.onnegotiationneeded = async () => {
-        if(isNegotiating.current) return;
-        try {
-            isNegotiating.current = true;
-            await newPc.setLocalDescription(await newPc.createOffer());
-            sendSignal({ type: 'sdp', sdp: newPc.localDescription });
-        } catch(err) {
-            console.error("Negotiation needed error:", err);
-            setError("Connection failed during negotiation.");
-            setStatus("error");
-        } finally {
-            isNegotiating.current = false;
+    const initializePeerConnection = () => {
+        if (pc.current) {
+            pc.current.close();
         }
-    }
 
-    newPc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendSignal({ type: 'ice-candidate', candidate: event.candidate });
-      }
-    };
-    
-    newPc.onconnectionstatechange = () => {
-        switch (newPc.connectionState) {
-            case 'connected':
-                // The data channel 'open' event is a more reliable indicator for starting transfer
-                break;
-            case 'disconnected':
-            case 'failed':
-                if (status !== 'done' && status !== 'error') {
-                  setError('Peer connection failed. Please try again.');
-                  setStatus('error');
-                  setIsPeerConnected(false);
+        const newPc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        });
+        pc.current = newPc;
+        isPolite.current = (role === 'receiver');
+        candidateBuffer.current = [];
+        isNegotiating.current = false;
+
+        newPc.onnegotiationneeded = async () => {
+            if(isNegotiating.current) return;
+            try {
+                isNegotiating.current = true;
+                // Senders are impolite and create the offer.
+                if (!isPolite.current) {
+                    await newPc.setLocalDescription(await newPc.createOffer());
+                    sendSignal({ type: 'sdp', sdp: newPc.localDescription });
                 }
-                break;
-            case 'closed':
-                // Connection closed
-                break;
+            } catch(err) {
+                console.error("Negotiation needed error:", err);
+                setError("Connection failed during negotiation.");
+                setStatus("error");
+            } finally {
+                isNegotiating.current = false;
+            }
         }
-    }
 
-    if (role === 'sender') {
-        dataChannel.current = newPc.createDataChannel('file-transfer', { ordered: true });
-        setupDataChannel(dataChannel.current);
-    } else {
+        newPc.onicecandidate = (event) => {
+          if (event.candidate) {
+            sendSignal({ type: 'ice-candidate', candidate: event.candidate });
+          }
+        };
+        
+        newPc.onconnectionstatechange = () => {
+            switch (newPc.connectionState) {
+                case 'connected':
+                    // The data channel 'open' event is a more reliable indicator.
+                    break;
+                case 'disconnected':
+                case 'failed':
+                    if (status !== 'done' && status !== 'error') {
+                      setError('Peer connection failed. Please try again.');
+                      setStatus('error');
+                      setIsPeerConnected(false);
+                    }
+                    break;
+                case 'closed':
+                    // Connection closed
+                    break;
+            }
+        }
+
         newPc.ondatachannel = (event) => {
             dataChannel.current = event.channel;
             setupDataChannel(dataChannel.current);
         };
     }
-  }, [role, sendSignal, status]);
 
-
-  const setupDataChannel = (dc: RTCDataChannel) => {
-    dc.onopen = () => {
-      setStatus('connected');
-      setIsPeerConnected(true);
-      if (role === 'sender' && file) {
-        sendFile();
-      }
-    };
-    dc.onclose = () => {
-      if(status !== 'done' && status !== 'error') {
-         setError('The other user disconnected.');
-         setStatus('error');
-         setIsPeerConnected(false);
-      }
-    };
-    dc.onmessage = (event) => {
-        handleDataChannelMessage(event.data);
-    };
-    dc.onerror = (err) => {
-        console.error("Data channel error:", err);
-        setError("An error occurred during transfer.");
-        setStatus("error");
-    }
-  };
-
-
-  const handleDataChannelMessage = (data: any) => {
-     if (typeof data === 'string') {
-        try {
-            const message = JSON.parse(data);
-            if (message.type === 'file-metadata') {
-                setFileMetadata(message.payload);
-                receivedBuffers.current = [];
-                setStatus(message.payload.size === 0 ? 'done' : 'transferring');
-            } else if (message.type === 'transfer-complete') {
-                setStatus('done');
-            } else if (message.type === 'cancel-transfer') {
-                setError('Sender canceled the transfer.');
-                setStatus('error');
-                receivedBuffers.current = [];
-            }
-        } catch (e) {
-            console.error("Failed to parse message", e)
+    const setupDataChannel = (dc: RTCDataChannel) => {
+        dc.onopen = () => {
+          setStatus('connected');
+          setIsPeerConnected(true);
+        };
+        dc.onclose = () => {
+          if(status !== 'done' && status !== 'error') {
+             setError('The other user disconnected.');
+             setStatus('error');
+             setIsPeerConnected(false);
+          }
+        };
+        dc.onmessage = (event) => {
+            handleDataChannelMessage(event.data);
+        };
+        dc.onerror = (err) => {
+            console.error("Data channel error:", err);
+            setError("An error occurred during transfer.");
+            setStatus("error");
         }
-    } else {
-        receivedBuffers.current.push(data);
-        if (fileMetadata) {
-            const receivedSize = receivedBuffers.current.reduce((acc, buffer) => acc + buffer.byteLength, 0);
-            setProgress((receivedSize / fileMetadata.size) * 100);
-        }
-    }
-  }
+    };
 
-  const startSending = useCallback(() => {
-    if (role !== 'sender' || !file) return;
-    setStatus('connecting');
+    const handleDataChannelMessage = (data: any) => {
+       if (typeof data === 'string') {
+          try {
+              const message = JSON.parse(data);
+              if (message.type === 'file-metadata') {
+                  setFileMetadata(message.payload);
+                  receivedBuffers.current = [];
+                  setStatus(message.payload.size === 0 ? 'done' : 'transferring');
+              } else if (message.type === 'transfer-complete') {
+                  setStatus('done');
+              } else if (message.type === 'cancel-transfer') {
+                  setError('Sender canceled the transfer.');
+                  setStatus('error');
+                  receivedBuffers.current = [];
+              }
+          } catch (e) {
+              console.error("Failed to parse message", e)
+          }
+      } else {
+          receivedBuffers.current.push(data);
+          if (fileMetadata) {
+              const receivedSize = receivedBuffers.current.reduce((acc, buffer) => acc + buffer.byteLength, 0);
+              setProgress((receivedSize / fileMetadata.size) * 100);
+          }
+      }
+    }
+    
     initializePeerConnection();
-  }, [role, file, initializePeerConnection]);
+    setStatus('connecting');
+    
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.data.startsWith(':')) return;
+      
+      const msg = JSON.parse(event.data);
+      const currentPc = pc.current;
+      if (!currentPc) return;
 
-  const sendFile = () => {
+      if (msg.type === 'peer-connected') {
+          setIsPeerConnected(true);
+      } else if (msg.type === 'peer-disconnected') {
+           setIsPeerConnected(false);
+           if (status !== 'done' && status !== 'error') {
+                setError('The other user disconnected.');
+                setStatus('error');
+           }
+      } else if (msg.type === 'sdp') {
+          const sdp = msg.sdp as RTCSessionDescription;
+
+          const offerCollision = sdp.type === "offer" && (isNegotiating.current || currentPc.signalingState !== "stable");
+          isNegotiating.current = offerCollision;
+          if (offerCollision && isPolite.current) {
+             // Polite peer yields to the impolite peer's offer.
+             // This is a simplified model. A full implementation might require rollback.
+          } else if (offerCollision && !isPolite.current) {
+              return; // Impolite peer ignores offer if already negotiating
+          }
+
+
+          try {
+              await currentPc.setRemoteDescription(sdp);
+              if (sdp.type === "offer") {
+                  await currentPc.setLocalDescription(await currentPc.createAnswer());
+                  sendSignal({ type: 'sdp', sdp: currentPc.localDescription });
+              }
+              // Process any buffered candidates
+              while (candidateBuffer.current.length > 0) {
+                  const candidate = candidateBuffer.current.shift();
+                  await currentPc.addIceCandidate(candidate!);
+              }
+          } catch(err) {
+              console.error("SDP error:", err);
+              setError("Failed to set up connection.");
+              setStatus("error");
+          } finally {
+              isNegotiating.current = false;
+          }
+      } else if (msg.type === 'ice-candidate') {
+          try {
+              const candidate = new RTCIceCandidate(msg.candidate);
+              if (currentPc.remoteDescription && currentPc.signalingState !== 'closed') {
+                  await currentPc.addIceCandidate(candidate);
+              } else {
+                  candidateBuffer.current.push(candidate);
+              }
+          } catch(e) {
+              if (currentPc.signalingState !== 'closed') {
+                console.error("Error adding received ice candidate", e);
+              }
+          }
+      }
+    };
+
+    eventSource.addEventListener('message', handleMessage);
+    eventSource.onerror = () => {
+      setError('Connection to signaling server lost.');
+      setStatus('error');
+      eventSource.close();
+    };
+    
+    const handleBeforeUnload = () => {
+        if (dataChannel.current && dataChannel.current.readyState === 'open') {
+            dataChannel.current.send(JSON.stringify({ type: 'cancel-transfer' }));
+        }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      eventSource.removeEventListener('message', handleMessage);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (pc.current) {
+        pc.current.close();
+        pc.current = null;
+      }
+      if (dataChannel.current) {
+          dataChannel.current.close();
+          dataChannel.current = null;
+      }
+    };
+  }, [eventSource, role, sendSignal, status, fileMetadata]);
+  
+   const sendFile = useCallback(() => {
     if (!file || !dataChannel.current || dataChannel.current.readyState !== 'open') {
-        // This check is crucial.
         setError("Data channel is not open. Cannot send file.");
         setStatus("error");
         return;
@@ -246,7 +338,13 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setStatus('error');
     }
     readSlice(0);
-  };
+  }, [file]);
+
+  useEffect(() => {
+    if (role === 'sender' && status === 'connected' && file) {
+      sendFile();
+    }
+  }, [status, role, file, sendFile]);
 
   const downloadFile = () => {
     if (status !== 'done' || !fileMetadata) return;
@@ -262,99 +360,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     a.remove();
     receivedBuffers.current = [];
   };
-
-  useEffect(() => {
-    if (!eventSource || !role) return;
-    if (role === 'receiver') {
-        setStatus('connecting');
-        initializePeerConnection();
-    }
-    
-    const handleMessage = async (event: MessageEvent) => {
-      if (event.data.startsWith(':')) return;
-      
-      const msg = JSON.parse(event.data);
-      const currentPc = pc.current;
-      if (!currentPc) return;
-
-      if (msg.type === 'peer-connected') {
-          setIsPeerConnected(true);
-      } else if (msg.type === 'peer-disconnected') {
-           setIsPeerConnected(false);
-           if (status !== 'done' && status !== 'error') {
-                setError('The other user disconnected.');
-                setStatus('error');
-           }
-      } else if (msg.type === 'sdp') {
-          const sdp = msg.sdp as RTCSessionDescription;
-
-          const offerCollision = sdp.type === "offer" && (isNegotiating.current || currentPc.signalingState !== "stable");
-          isNegotiating.current = offerCollision;
-          if (isNegotiating.current && !isPolite.current) {
-              return; // Impolite peer ignores offer if already negotiating
-          }
-
-          try {
-              await currentPc.setRemoteDescription(sdp);
-              if (sdp.type === "offer") {
-                  await currentPc.setLocalDescription(await currentPc.createAnswer());
-                  sendSignal({ type: 'sdp', sdp: currentPc.localDescription });
-              }
-              // Process any buffered candidates
-              while (candidateBuffer.current.length > 0) {
-                  const candidate = candidateBuffer.current.shift();
-                  await currentPc.addIceCandidate(candidate!);
-              }
-          } catch(err) {
-              console.error("SDP error:", err);
-              setError("Failed to set up connection.");
-              setStatus("error");
-          } finally {
-              isNegotiating.current = false;
-          }
-      } else if (msg.type === 'ice-candidate') {
-          try {
-              const candidate = new RTCIceCandidate(msg.candidate);
-              if (currentPc.remoteDescription && currentPc.signalingState !== 'closed') {
-                  await currentPc.addIceCandidate(candidate);
-              } else {
-                  candidateBuffer.current.push(candidate);
-              }
-          } catch(e) {
-              if (currentPc.signalingState !== 'closed') {
-                console.error("Error adding received ice candidate", e);
-              }
-          }
-      }
-    };
-
-    eventSource.addEventListener('message', handleMessage);
-    eventSource.onerror = (e) => {
-      setError('Connection to signaling server lost.');
-      setStatus('error');
-      eventSource.close();
-    };
-    
-    const handleBeforeUnload = () => {
-        if (dataChannel.current && dataChannel.current.readyState === 'open') {
-            dataChannel.current.send(JSON.stringify({ type: 'cancel-transfer' }));
-        }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      eventSource.removeEventListener('message', handleMessage);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      if (pc.current) {
-        pc.current.close();
-        pc.current = null;
-      }
-      if (dataChannel.current) {
-          dataChannel.current.close();
-          dataChannel.current = null;
-      }
-    };
-  }, [eventSource, role, initializePeerConnection, sendSignal, status]);
 
   const value = useMemo(() => ({
     file,
@@ -385,5 +390,3 @@ export const usePeer = () => {
   return context;
 };
 
-    
-    
