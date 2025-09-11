@@ -70,6 +70,25 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const dataChannel = useRef<RTCDataChannel | null>(null);
   const receivedBuffers = useRef<ArrayBuffer[]>([]);
 
+  const setupDataChannel = () => {
+    if (!dataChannel.current) return;
+    dataChannel.current.onopen = () => {
+      setStatus('connected');
+       if (role === 'sender' && file) {
+        sendFile();
+      }
+    };
+    dataChannel.current.onclose = () => {
+       // Only reset if not done or errored
+      if(status !== 'done' && status !== 'error') {
+         setStatus('idle');
+         setIsPeerConnected(false);
+      }
+    };
+    dataChannel.current.onmessage = (event) => {
+        handleDataChannelMessage(event.data);
+    };
+  };
 
   const initializePeerConnection = () => {
     if (!roomId) return;
@@ -86,7 +105,9 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     
     newPc.onconnectionstatechange = () => {
-        if (newPc.connectionState === 'connected') {
+        // We use the data channel 'open' event to set the connected status for the sender.
+        // For the receiver, the connection state change is a good indicator.
+        if (newPc.connectionState === 'connected' && role === 'receiver') {
             setStatus('connected');
         }
          if (newPc.connectionState === 'failed' || newPc.connectionState === 'disconnected') {
@@ -105,22 +126,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pc.current = newPc;
   };
 
-  const setupDataChannel = () => {
-    if (!dataChannel.current) return;
-    dataChannel.current.onopen = () => {
-      setStatus('connected');
-    };
-    dataChannel.current.onclose = () => {
-       // Only reset if not done or errored
-      if(status !== 'done' && status !== 'error') {
-         setStatus('idle');
-         setIsPeerConnected(false);
-      }
-    };
-    dataChannel.current.onmessage = (event) => {
-        handleDataChannelMessage(event.data);
-    };
-  };
 
   const handleDataChannelMessage = (data: any) => {
      if (typeof data === 'string') {
@@ -171,14 +176,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error(e);
       });
   };
-
-  useEffect(() => {
-    if (status === 'connected' && role === 'sender' && file && dataChannel.current?.readyState === 'open') {
-        sendFile();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, role, file]);
-
 
   const sendFile = () => {
     if (!file || !dataChannel.current) return;
@@ -270,10 +267,8 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (!eventSource || !role) return;
-
-    // We only initialize the peer connection once we have a valid event source.
-    initializePeerConnection();
     
+    initializePeerConnection();
     const currentPc = pc.current;
 
     const handleMessage = async (event: MessageEvent) => {
