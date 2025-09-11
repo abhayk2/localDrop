@@ -16,7 +16,6 @@ interface PeerState {
   progress: number;
   status: 'idle' | 'connecting' | 'connected' | 'transferring' | 'done' | 'error';
   isPeerConnected: boolean;
-  startSending: () => void;
   downloadFile: () => void;
   role: PeerRole | null;
   setRole: (role: PeerRole) => void;
@@ -62,23 +61,28 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   const candidateBuffer = useRef<RTCIceCandidate[]>([]);
   
-  const startSending = useCallback(() => {
-    if (!pc.current) return;
-    // This will trigger the 'onnegotiationneeded' event
-    pc.current.addTransceiver('file', {direction: 'sendonly'});
-  }, []);
-
   const sendSignalRef = useRef(sendSignal);
   useEffect(() => {
     sendSignalRef.current = sendSignal;
   }, [sendSignal]);
 
+  const fileRef = useRef(file);
+  useEffect(() => {
+    fileRef.current = file;
+  }, [file]);
+
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+
   useEffect(() => {
     if (!eventSource || !role) {
-      return;
+        return;
     }
     
-    // Only run this effect once to set up the peer connection
+    // This effect should run only ONCE to set up the peer connection
     if (pc.current) {
         return;
     }
@@ -91,17 +95,18 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setStatus('connecting');
 
     const sendFile = () => {
-        if (!file || !dataChannel.current || dataChannel.current.readyState !== 'open') {
+        const currentFile = fileRef.current;
+        if (!currentFile || !dataChannel.current || dataChannel.current.readyState !== 'open') {
             return;
         };
 
         setStatus('transferring');
         dataChannel.current.send(JSON.stringify({
           type: 'file-metadata',
-          payload: { name: file.name, size: file.size, type: file.type }
+          payload: { name: currentFile.name, size: currentFile.size, type: currentFile.type }
         }));
 
-        if (file.size === 0) {
+        if (currentFile.size === 0) {
             dataChannel.current?.send(JSON.stringify({ type: 'transfer-complete' }));
             setStatus('done');
             return;
@@ -110,7 +115,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const fileReader = new FileReader();
         let offset = 0;
         const readSlice = (o: number) => {
-            const slice = file.slice(o, o + CHUNK_SIZE);
+            const slice = currentFile.slice(o, o + CHUNK_SIZE);
             fileReader.readAsArrayBuffer(slice);
         };
 
@@ -120,12 +125,13 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const chunk = e.target.result as ArrayBuffer;
             dataChannel.current.send(chunk);
             offset += chunk.byteLength;
-            setProgress((offset / file.size) * 100);
-            if (offset < file.size) {
+            setProgress((offset / currentFile.size) * 100);
+
+            if (offset < currentFile.size) {
                 if (dataChannel.current.bufferedAmount > HIGH_WATER_MARK) {
                     dataChannel.current.onbufferedamountlow = () => {
-                        dataChannel.current!.onbufferedamountlow = null;
-                        if(offset < file.size) readSlice(offset);
+                        dataChannel.current!.onbufferedamountlow = null; // Clear the handler to avoid multiple triggers
+                        if(offset < currentFile.size) readSlice(offset);
                     };
                     return;
                 }
@@ -178,13 +184,12 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         dc.onopen = () => {
           setStatus('connected');
           setIsPeerConnected(true);
-          if(role === 'sender' && file) {
+          if(role === 'sender' && fileRef.current) {
               sendFile();
           }
         };
         dc.onclose = () => {
-          // This check prevents showing an error after a successful transfer
-          if(status !== 'done' && status !== 'error') {
+          if(statusRef.current !== 'done' && statusRef.current !== 'error') {
              setError('The other user disconnected.');
              setStatus('error');
              setIsPeerConnected(false);
@@ -200,14 +205,13 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
     
-    pc.current.onnegotiationneeded = async () => {
+    newPc.onnegotiationneeded = async () => {
         if(isNegotiating.current) return;
         try {
             isNegotiating.current = true;
-            // Only the impolite peer (sender) creates the initial offer
             if (!isPolite.current) {
-                await pc.current!.setLocalDescription(await pc.current!.createOffer());
-                sendSignalRef.current({ type: 'sdp', sdp: pc.current!.localDescription });
+                await newPc.setLocalDescription(await newPc.createOffer());
+                sendSignalRef.current({ type: 'sdp', sdp: newPc.localDescription });
             }
         } catch(err) {
             console.error("Negotiation needed error:", err);
@@ -218,17 +222,17 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }
 
-    pc.current.onicecandidate = (event) => {
+    newPc.onicecandidate = (event) => {
       if (event.candidate) {
         sendSignalRef.current({ type: 'ice-candidate', candidate: event.candidate });
       }
     };
     
-    pc.current.onconnectionstatechange = () => {
-        switch (pc.current!.connectionState) {
+    newPc.onconnectionstatechange = () => {
+        switch (newPc.connectionState) {
             case 'disconnected':
             case 'failed':
-                if (status !== 'done' && status !== 'error') {
+                if (statusRef.current !== 'done' && statusRef.current !== 'error') {
                   setError('Peer connection failed. Please try again.');
                   setStatus('error');
                   setIsPeerConnected(false);
@@ -240,8 +244,9 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }
 
-    pc.current.ondatachannel = (event) => {
+    newPc.ondatachannel = (event) => {
         dataChannel.current = event.channel;
+        dataChannel.current.binaryType = 'arraybuffer';
         setupDataChannel(dataChannel.current);
     };
 
@@ -250,32 +255,30 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       const msg = JSON.parse(event.data);
       const currentPc = pc.current;
-      if (!currentPc) return;
+      if (!currentPc || currentPc.signalingState === 'closed') return;
 
       if (msg.type === 'peer-connected') {
           // The sender (impolite peer) creates the data channel and initiates the handshake
           if (role === 'sender' && !dataChannel.current) {
-            dataChannel.current = currentPc.createDataChannel('fileTransfer');
+            dataChannel.current = currentPc.createDataChannel('fileTransfer', { ordered: false, maxRetransmits: 0 });
+            dataChannel.current.binaryType = 'arraybuffer';
+            dataChannel.current.bufferedAmountLowThreshold = HIGH_WATER_MARK;
             setupDataChannel(dataChannel.current);
-            // Kicking off negotiation here for the sender
-            if(file){
-                startSending();
-            }
           }
       } else if (msg.type === 'peer-disconnected') {
            setIsPeerConnected(false);
-           if (status !== 'done' && status !== 'error') {
+           if (statusRef.current !== 'done' && statusRef.current !== 'error') {
                 setError('The other user disconnected.');
                 setStatus('error');
            }
       } else if (msg.type === 'sdp') {
           const sdp = msg.sdp as RTCSessionDescription;
-
           const offerCollision = sdp.type === "offer" && (isNegotiating.current || currentPc.signalingState !== "stable");
+
           if (offerCollision && !isPolite.current) {
               return; 
           }
-          isNegotiating.current = offerCollision;
+          isNegotiating.current = true;
 
           try {
               await currentPc.setRemoteDescription(sdp);
@@ -298,14 +301,12 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else if (msg.type === 'ice-candidate') {
           try {
               const candidate = new RTCIceCandidate(msg.candidate);
-              if (currentPc.remoteDescription && currentPc.signalingState !== 'closed') {
+              if (currentPc.remoteDescription) {
                   await currentPc.addIceCandidate(candidate);
               } else {
-                  // Buffer candidates if remote description is not yet set
                   candidateBuffer.current.push(candidate);
               }
           } catch(e) {
-              // Ignore errors for closed connections
               if (currentPc.signalingState !== 'closed') {
                 console.error("Error adding received ice candidate", e);
               }
@@ -319,11 +320,6 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setStatus('error');
       eventSource.close();
     };
-    
-    // This logic needs to run for the sender if the receiver is already waiting
-    if(isPeerConnected && role === 'sender' && file) {
-      startSending();
-    }
     
     const handleBeforeUnload = () => {
         if (dataChannel.current && dataChannel.current.readyState === 'open') {
@@ -348,8 +344,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
           dataChannel.current = null;
       }
     };
-    // The empty dependency array is CRITICAL to ensure this effect runs only once.
-  }, [eventSource, role, file, isPeerConnected, startSending]);
+  }, [eventSource, role]);
   
   const downloadFile = () => {
     if (status !== 'done' || !fileMetadata) return;
@@ -372,13 +367,12 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
     progress,
     status,
     isPeerConnected,
-    startSending,
     downloadFile,
     role,
     setRole,
     error,
     fileMetadata,
-  }), [file, progress, status, isPeerConnected, role, error, fileMetadata, setRole, downloadFile, startSending]);
+  }), [file, progress, status, isPeerConnected, role, error, fileMetadata, setRole, downloadFile]);
 
   return (
     <PeerContext.Provider value={value}>
@@ -394,5 +388,3 @@ export const usePeer = () => {
   }
   return context;
 };
-
-    

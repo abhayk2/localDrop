@@ -106,14 +106,8 @@ function TransferInProgress() {
 
 function SenderView() {
     const { roomId, leaveRoom } = useP2P();
-    const { file, setFile, status, progress, startSending, error, isPeerConnected } = usePeer();
+    const { file, setFile, status, progress, error, isPeerConnected } = usePeer();
     const { toast } = useToast();
-
-    useEffect(() => {
-        if(isPeerConnected && file && status === 'idle'){
-            startSending();
-        }
-    }, [isPeerConnected, file, status, startSending]);
 
     const handleCopyCode = () => {
         if (!roomId) return;
