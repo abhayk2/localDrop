@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { io, Socket } from 'socket.io-client'; // io to create connection to our server and socket object
 
 interface P2PContextState {
   roomId: string | null;
@@ -8,8 +9,8 @@ interface P2PContextState {
   createRoom: () => void;
   joinRoom: (id: string) => void;
   leaveRoom: () => void;
-  sendSignal: (data: any) => Promise<void>;
-  eventSource: EventSource | null;
+  sendSignal: (data: any) => void;
+  socket: Socket | null;
 }
 
 const P2PContext = createContext<P2PContextState | null>(null);
@@ -20,54 +21,48 @@ function generateRoomId() {
 
 export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [roomId, setRoomId] = useState<string | null>(null);
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const role = useRef<'sender' | 'receiver' | null>(null);
-
 
   const createRoom = useCallback(() => {
     const newRoomId = generateRoomId();
-    setRoomId(newRoomId);
     role.current = 'sender';
+    setRoomId(newRoomId);
   }, []);
 
   const joinRoom = useCallback((id: string) => {
-    setRoomId(id.toUpperCase());
     role.current = 'receiver';
+    setRoomId(id.toUpperCase());
   }, []);
-  
+
   const leaveRoom = useCallback(() => {
     setRoomId(null);
     role.current = null;
-    // The useEffect cleanup will close the eventSource
   }, []);
 
-
   useEffect(() => {
-    let es: EventSource | null = null;
-    if (roomId && role.current) {
-      // The GET request establishes the EventSource connection.
-      es = new EventSource(`/api/p2p?roomId=${roomId}&type=${role.current}`);
-      setEventSource(es);
+    if (!roomId || !role.current) {
+      return;
     }
-    
+    const newSocket = io('http://localhost:3001');
+    setSocket(newSocket);
+
+    if (role.current === 'sender') {
+      newSocket.emit('create-room', { roomId });
+    } else {
+      newSocket.emit('join-room', { roomId });
+    }
+
     return () => {
-      if (es) {
-        es.close();
-      }
-      setEventSource(null);
+      newSocket.disconnect();
+      setSocket(null);
     };
-  }, [roomId, role]);
-
-
-  const sendSignal = useCallback(async (data: any) => {
-    if (!roomId || !role.current) return;
-    // POST requests are now only for sending signals.
-    await fetch('/api/p2p', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId, data, type: role.current }),
-    });
   }, [roomId]);
+
+  const sendSignal = useCallback((data: any) => {
+    if (!socket || !roomId) return;
+    socket.emit('signal', { roomId, data });
+  }, [roomId, socket]);
 
   const value = useMemo(() => ({
     roomId,
@@ -76,8 +71,8 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     joinRoom,
     leaveRoom,
     sendSignal,
-    eventSource,
-  }), [roomId, setRoomId, createRoom, joinRoom, leaveRoom, sendSignal, eventSource]);
+    socket: socket,
+  }), [roomId, setRoomId, createRoom, joinRoom, leaveRoom, sendSignal, socket]);
 
   return (
     <P2PContext.Provider value={value}>
@@ -85,7 +80,6 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     </P2PContext.Provider>
   );
 };
-
 export const useP2P = () => {
   const context = useContext(P2PContext);
   if (!context) {
