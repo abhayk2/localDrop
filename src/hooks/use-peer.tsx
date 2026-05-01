@@ -257,7 +257,7 @@ export const PeerProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             if (msg.type === 'peer-connected') {
                 if (role === 'sender' && !dataChannel.current) {
-                    dataChannel.current = currentPc.createDataChannel('fileTransfer', { ordered: false, maxRetransmits: 0 });
+                    dataChannel.current = currentPc.createDataChannel('fileTransfer', { ordered: true });
                     dataChannel.current.binaryType = 'arraybuffer';
                     dataChannel.current.bufferedAmountLowThreshold = HIGH_WATER_MARK;
                     setupDataChannel(dataChannel.current);
