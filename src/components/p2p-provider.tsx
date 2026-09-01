@@ -44,7 +44,7 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!roomId || !role.current) {
       return;
     }
-    const newSocket = io('localdrop-production.up.railway.app');
+    const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL);
     setSocket(newSocket);
 
     if (role.current === 'sender') {
