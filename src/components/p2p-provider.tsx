@@ -44,7 +44,7 @@ export const P2PProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!roomId || !role.current) {
       return;
     }
-    const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL);
+const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'https://129.225.86.22.sslip.io');
     setSocket(newSocket);
 
     if (role.current === 'sender') {
